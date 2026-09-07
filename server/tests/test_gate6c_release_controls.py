@@ -236,9 +236,10 @@ def test_release_workflow_maps_inputs_and_preserves_release_boundaries() -> None
     assert workflow.count("[string]$release.id -ne $env:EXPECTED_RELEASE_ID") == 2
     assert workflow.count("$release.tag_name -ne $env:TAG") == 2
     assert workflow.count("$release.target_commitish -ne $env:EXPECTED_COMMIT") == 2
-    assert workflow.count(
+    prerelease_check = (
         "[bool]$release.prerelease -ne ($env:PUBLISH_PRERELEASE -eq 'true')"
-    ) == 2
+    )
+    assert verify_draft.count(prerelease_check) == 1
     assert workflow.count("$assets.Count -ne $expectedNames.Count") == 2
     assert workflow.count("'Accept: application/octet-stream'") == 2
     assert workflow.count('"Authorization: Bearer $env:GH_TOKEN"') == 2
@@ -261,6 +262,7 @@ def test_release_workflow_maps_inputs_and_preserves_release_boundaries() -> None
         "EXPECTED_RELEASE_ID: ${{ inputs.expected_release_id }}" in promote_step
     )
     assert "PUBLISH_PRERELEASE: ${{ inputs.publish_prerelease }}" in promote_step
+    assert promote_step.count(prerelease_check) == 1
     assert "$ErrorActionPreference = 'Stop'" in promote_step
     assert verifier in promote_step
     assert "gh release view" not in workflow
