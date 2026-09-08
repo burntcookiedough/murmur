@@ -232,13 +232,20 @@ def test_release_verification_requires_both_engine_discovery_properties() -> Non
 def test_release_workflow_verifies_existing_draft_without_rebuilding() -> None:
     workflow_path = ROOT / ".github" / "workflows" / "release.yml"
     contents = workflow_path.read_text(encoding="utf-8")
+    publish_step = contents.split(
+        "- name: Publish the existing verified draft only", 1
+    )[1]
     assert "workflow_dispatch:" in contents
     assert "production-release" in contents
+    assert "publish_prerelease" in contents
     assert "release-artifacts.ps1 -Mode Verify" in contents
     assert 'gh api "repos/${{ github.repository }}/releases/$env:EXPECTED_RELEASE_ID"' in contents
     assert "'Accept: application/octet-stream'" in contents
     assert "gh release download" not in contents
     assert "draft=false" in contents
+    assert "PUBLISH_PRERELEASE: ${{ inputs.publish_prerelease }}" in publish_step
+    assert "--draft=false --prerelease --latest=false" in publish_step
+    assert "--draft=false --prerelease=false --latest" in publish_step
     allow_block = contents.split("allow_unsigned:", 1)[1].split("accepted_name_risk:", 1)[0]
     name_block = contents.split("accepted_name_risk:", 1)[1].split("permissions:", 1)[0]
     assert "default: false" in allow_block

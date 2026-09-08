@@ -29,6 +29,11 @@ on:
         required: true
         default: false
         type: boolean
+      publish_prerelease:
+        description: Publish a hyphenated semantic-version tag as a prerelease, never latest
+        required: true
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -65,10 +70,13 @@ jobs:
           EXPECTED_RELEASE_ID: ${{ inputs.expected_release_id }}
           ALLOW_UNSIGNED: ${{ inputs.allow_unsigned }}
           ACCEPTED_NAME_RISK: ${{ inputs.accepted_name_risk }}
+          PUBLISH_PRERELEASE: ${{ inputs.publish_prerelease }}
         run: |
           $ErrorActionPreference = 'Stop'
-          if ($env:TAG -notmatch '^v\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$' -or $env:EXPECTED_COMMIT -notmatch '^[0-9a-f]{40}$' -or $env:EXPECTED_RELEASE_ID -notmatch '^[1-9][0-9]*$') { throw 'Malformed release inputs.' }
+          if ($env:TAG -notmatch '^v\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$' -or $env:EXPECTED_COMMIT -notmatch '^[0-9a-f]{40}$' -or $env:EXPECTED_RELEASE_ID -notmatch '^[1-9][0-9]*$' -or $env:PUBLISH_PRERELEASE -notin @('true', 'false')) { throw 'Malformed release inputs.' }
           if ($env:ACCEPTED_NAME_RISK -ne 'true') { throw 'Name-risk acceptance must be explicit.' }
+          $tagIsPrerelease = $env:TAG -match '-'
+          if (($env:PUBLISH_PRERELEASE -eq 'true') -ne $tagIsPrerelease) { throw 'Prerelease intent must match the semantic-version tag.' }
       - name: Download existing draft assets only
         shell: pwsh
         env:
@@ -76,6 +84,7 @@ jobs:
           TAG: ${{ inputs.tag }}
           EXPECTED_COMMIT: ${{ inputs.expected_commit }}
           EXPECTED_RELEASE_ID: ${{ inputs.expected_release_id }}
+          PUBLISH_PRERELEASE: ${{ inputs.publish_prerelease }}
         run: |
           $ErrorActionPreference = 'Stop'
           function Resolve-ReleaseTagCommit {
@@ -98,7 +107,7 @@ jobs:
           $releaseJson = gh api "repos/${{ github.repository }}/releases/$env:EXPECTED_RELEASE_ID"
           if ($LASTEXITCODE -ne 0) { throw 'Draft release ID could not be fetched.' }
           $release = $releaseJson | ConvertFrom-Json
-          if ([string]$release.id -ne $env:EXPECTED_RELEASE_ID -or -not $release.draft -or $release.prerelease -or $release.tag_name -ne $env:TAG -or $release.target_commitish -ne $env:EXPECTED_COMMIT) { throw 'An exact-ID, exact-target non-prerelease draft release is required.' }
+          if ([string]$release.id -ne $env:EXPECTED_RELEASE_ID -or -not $release.draft -or [bool]$release.prerelease -ne ($env:PUBLISH_PRERELEASE -eq 'true') -or $release.tag_name -ne $env:TAG -or $release.target_commitish -ne $env:EXPECTED_COMMIT) { throw 'An exact-ID, exact-target draft release with matching prerelease intent is required.' }
           $version = $env:TAG.Substring(1)
           $expectedNames = @(
             "Eve.Web.Setup.$version.exe",
@@ -165,9 +174,10 @@ jobs:
           EXPECTED_RELEASE_ID: ${{ inputs.expected_release_id }}
           EXPECTED_MANIFEST_SHA256: ${{ inputs.expected_manifest_sha256 }}
           ALLOW_UNSIGNED: ${{ inputs.allow_unsigned }}
+          PUBLISH_PRERELEASE: ${{ inputs.publish_prerelease }}
         run: |
           $ErrorActionPreference = 'Stop'
-          if ($env:TAG -notmatch '^v\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$' -or $env:EXPECTED_COMMIT -notmatch '^[0-9a-f]{40}$' -or $env:EXPECTED_RELEASE_ID -notmatch '^[1-9][0-9]*$' -or $env:EXPECTED_MANIFEST_SHA256 -notmatch '^[0-9a-fA-F]{64}$' -or $env:ALLOW_UNSIGNED -notin @('true', 'false')) { throw 'Malformed release inputs.' }
+          if ($env:TAG -notmatch '^v\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$' -or $env:EXPECTED_COMMIT -notmatch '^[0-9a-f]{40}$' -or $env:EXPECTED_RELEASE_ID -notmatch '^[1-9][0-9]*$' -or $env:EXPECTED_MANIFEST_SHA256 -notmatch '^[0-9a-fA-F]{64}$' -or $env:ALLOW_UNSIGNED -notin @('true', 'false') -or $env:PUBLISH_PRERELEASE -notin @('true', 'false')) { throw 'Malformed release inputs.' }
           function Resolve-ReleaseTagCommit {
             $refJson = gh api "repos/${{ github.repository }}/git/ref/tags/$env:TAG"
             if ($LASTEXITCODE -ne 0) { throw 'Exact release tag does not exist.' }
@@ -188,7 +198,7 @@ jobs:
           $releaseJson = gh api "repos/${{ github.repository }}/releases/$env:EXPECTED_RELEASE_ID"
           if ($LASTEXITCODE -ne 0) { throw 'Draft release ID could not be re-fetched after approval.' }
           $release = $releaseJson | ConvertFrom-Json
-          if ([string]$release.id -ne $env:EXPECTED_RELEASE_ID -or -not $release.draft -or $release.prerelease -or $release.tag_name -ne $env:TAG -or $release.target_commitish -ne $env:EXPECTED_COMMIT) { throw 'Draft ID, target, or state changed after verification.' }
+          if ([string]$release.id -ne $env:EXPECTED_RELEASE_ID -or -not $release.draft -or [bool]$release.prerelease -ne ($env:PUBLISH_PRERELEASE -eq 'true') -or $release.tag_name -ne $env:TAG -or $release.target_commitish -ne $env:EXPECTED_COMMIT) { throw 'Draft ID, target, prerelease intent, or state changed after verification.' }
           $version = $env:TAG.Substring(1)
           $expectedNames = @(
             "Eve.Web.Setup.$version.exe",
@@ -220,4 +230,12 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ inputs.tag }}
-        run: gh release edit $env:TAG --repo '${{ github.repository }}' --draft=false --prerelease=false --latest
+          PUBLISH_PRERELEASE: ${{ inputs.publish_prerelease }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:PUBLISH_PRERELEASE -eq 'true') {
+            gh release edit $env:TAG --repo '${{ github.repository }}' --draft=false --prerelease --latest=false
+          } else {
+            gh release edit $env:TAG --repo '${{ github.repository }}' --draft=false --prerelease=false --latest
+          }
+          if ($LASTEXITCODE -ne 0) { throw 'Release publication failed.' }
